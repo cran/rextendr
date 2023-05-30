@@ -10,53 +10,93 @@
 #' package source.
 #'
 #' @param path File path to the package for which to generate wrapper code.
+#' @param crate_name String that is used as the name of the Rust crate.
+#' If `NULL`, sanitized R package name is used instead.
+#' @param lib_name String that is used as the name of the Rust library.
+#' If `NULL`, sanitized R package name is used instead.
 #' @param quiet Logical indicating whether any progress messages should be
-#'   generated or not. Also checks the `usethis.quiet` option.
+#'   generated or not.
+#' @param edition String indicating which Rust edition is used; Default `"2021"`.
 #' @return A logical value (invisible) indicating whether any package files were
 #' generated or not.
 #' @export
-use_extendr <- function(path = ".", quiet = getOption("usethis.quiet", FALSE)) {
+use_extendr <- function(path = ".",
+                        crate_name = NULL,
+                        lib_name = NULL,
+                        quiet = FALSE,
+                        edition = c("2021", "2018")) {
+  # https://github.com/r-lib/cli/issues/434
+
+  local_quiet_cli(quiet)
+
+  rextendr_setup(path = path)
+
   pkg_name <- pkg_name(path)
+  mod_name <- as_valid_rust_name(pkg_name)
+
+  if (is.null(crate_name)) {
+    crate_name <- mod_name
+  } else {
+    throw_if_invalid_rust_name(crate_name)
+  }
+
+  if (is.null(lib_name)) {
+    lib_name <- mod_name
+  } else {
+    throw_if_invalid_rust_name(lib_name)
+  }
 
   src_dir <- rprojroot::find_package_root_file("src", path = path)
+  r_dir <- rprojroot::find_package_root_file("R", path = path)
   wrappers_file <- rprojroot::find_package_root_file("R", "extendr-wrappers.R", path = path)
+  if (!dir.exists(r_dir)) {
+    cli::cli_alert_success("Writing {.file R/}")
+    dir.create(r_dir)
+  }
 
   if (dir.exists(src_dir)) {
-    if (!isTRUE(quiet)) {
-      ui_x("Directory {.file src} already present in package source. No action taken.")
-    }
+    cli::cli_alert_danger(
+      "Directory {.file src} already present in package source. No action taken."
+    )
     return(invisible(FALSE))
   }
   if (file.exists(wrappers_file)) {
-    if (!isTRUE(quiet)) {
-      ui_x("File {.file R/extendr-wrappers.R} already present in package source. No action taken.")
-    }
+    cli::cli_alert_danger(
+      "File {.file R/extendr-wrappers.R} already present in package source. No action taken."
+    )
     return(invisible(FALSE))
   }
 
   rust_src_dir <- file.path(src_dir, "rust", "src")
   dir.create(rust_src_dir, recursive = TRUE)
-  ui_v("Creating {.file {pretty_rel_path(rust_src_dir, path)}}.")
+  cli::cli_alert_success("Creating {.file {pretty_rel_path(rust_src_dir, path)}}.")
 
   use_rextendr_template(
     "entrypoint.c",
     save_as = file.path("src", "entrypoint.c"),
     quiet = quiet,
-    data = list(pkg_name = pkg_name)
+    data = list(mod_name = mod_name)
   )
 
   use_rextendr_template(
     "Makevars",
     save_as = file.path("src", "Makevars"),
     quiet = quiet,
-    data = list(pkg_name = pkg_name)
+    data = list(lib_name = lib_name)
   )
 
   use_rextendr_template(
     "Makevars.win",
     save_as = file.path("src", "Makevars.win"),
     quiet = quiet,
-    data = list(pkg_name = pkg_name)
+    data = list(lib_name = lib_name)
+  )
+
+  use_rextendr_template(
+    "Makevars.ucrt",
+    save_as = file.path("src", "Makevars.ucrt"),
+    quiet = quiet,
+    data = list(lib_name = lib_name)
   )
 
   use_rextendr_template(
@@ -65,9 +105,12 @@ use_extendr <- function(path = ".", quiet = getOption("usethis.quiet", FALSE)) {
     quiet = quiet
   )
 
+  usethis::use_build_ignore("src/.cargo")
+
+  edition <- match.arg(edition, several.ok = FALSE)
   cargo_toml_content <- to_toml(
-    package = list(name = pkg_name, version = "0.1.0", edition = "2018"),
-    lib = list(`crate-type` = array("staticlib", 1)),
+    package = list(name = crate_name, version = "0.1.0", edition = edition),
+    lib = list(`crate-type` = array("staticlib", 1), name = lib_name),
     dependencies = list(`extendr-api` = "*")
   )
 
@@ -82,7 +125,14 @@ use_extendr <- function(path = ".", quiet = getOption("usethis.quiet", FALSE)) {
     "lib.rs",
     save_as = file.path("src", "rust", "src", "lib.rs"),
     quiet = quiet,
-    data = list(pkg_name = pkg_name)
+    data = list(mod_name = mod_name)
+  )
+
+  use_rextendr_template(
+    "win.def",
+    save_as = file.path("src", paste0(pkg_name, "-win.def")),
+    quiet = quiet,
+    data = list(mod_name = mod_name)
   )
 
   use_rextendr_template(
@@ -93,14 +143,62 @@ use_extendr <- function(path = ".", quiet = getOption("usethis.quiet", FALSE)) {
   )
 
   if (!isTRUE(quiet)) {
-    ui_v("Finished configuring {.pkg extendr} for package {.pkg {pkg_name}}.")
-    ui_o("Please update the system requirement in {.file DESCRIPTION} file.")
-    ui_o("Please run {.fun rextendr::document} for changes to take effect.")
+    cli::cli_alert_success("Finished configuring {.pkg extendr} for package {.pkg {pkg_name}}.")
+    cli::cli_ul(
+      c(
+        "Please update the system requirement in {.file DESCRIPTION} file.",
+        "Please run {.fun rextendr::document} for changes to take effect."
+      )
+    )
   }
 
   return(invisible(TRUE))
 }
 
+#' Checks if provided name is a valid Rust name (identifier)
+#'
+#' @param name \[ character(n) \] Names to test.
+#' @return \[ logical(n) \] `TRUE` if the name is valid, otherwise `FALSE`.
+#' @noRd
+is_valid_rust_name <- function(name) {
+  # We require the name starts with a letter,
+  # ends with a letter or digit,
+  # and contains only alphanumeric ASCII chars, `-` or `_`.
+  stringi::stri_detect_regex(name, "^[A-z][\\A-z0-9_-]*[A-z0-9]$")
+}
+
+#' Convert R package name into equivalent valid Rust name.
+#'
+#' @param name \[ character(n) \] R names to convert.
+#' @return \[ character(n) \] Equivalent Rust name (if exists), otherwise `NA`.
+#' @noRd
+as_valid_rust_name <- function(name) {
+  rust_name <- stringi::stri_replace_all_regex(name, "[^\\w-]", "_")
+  if (stringi::stri_detect_regex(rust_name, "^\\d")) {
+    rust_name <- paste0("_", rust_name)
+  }
+  throw_if_invalid_rust_name(rust_name)
+  rust_name
+}
+
+#' Verifies if a function argument is a valid Rust name.
+#'
+#' @param name \[ string \] Tested caller function argument.
+#' @param call \[ env \] Environment of the caller, passed to `cli::cli_abort()`.
+#' @noRd
+throw_if_invalid_rust_name <- function(name, call = caller_env()) {
+  quo <- enquo(name) # nolint: object_usage_linter
+  if (!rlang::is_scalar_character(name) || !is_valid_rust_name(name)) {
+    cli::cli_abort(
+      c(
+        "Argument {.arg {as_name(quo)}} is invalid.",
+        "!" = "{.code {as_label(name)}} cannot be used as Rust package or library name."
+      ),
+      call = call,
+      class = "rextendr_error"
+    )
+  }
+}
 #' Write templates from `inst/templates`
 #'
 #' `use_rextendr_template()` is a wrapper around `usethis::use_template()` when
@@ -110,9 +208,13 @@ use_extendr <- function(path = ".", quiet = getOption("usethis.quiet", FALSE)) {
 #' @inheritParams use_extendr
 #'
 #' @noRd
-use_rextendr_template <- function(template, save_as = template, data = list(), quiet = getOption("usethis.quiet", FALSE)) {
+use_rextendr_template <- function(template,
+                                  save_as = template,
+                                  data = list(),
+                                  quiet = FALSE) {
+  local_quiet_cli(quiet)
+
   if (is_installed("usethis")) {
-    withr::local_options(usethis.quiet = quiet)
     created <- usethis::use_template(
       template,
       save_as = save_as,
@@ -136,11 +238,12 @@ use_rextendr_template <- function(template, save_as = template, data = list(), q
   template_content <- glue::glue_data(
     template_content,
     .x = data,
-    .open = "{{{", .close = "}}}"
+    .open = "{{{", .close = "}}}",
+    .trim = FALSE
   )
 
   write_file(
-    template_content,
+    stringi::stri_trim(template_content),
     path = save_as,
     search_root_from = rprojroot::find_package_root_file(),
     quiet = quiet

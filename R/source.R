@@ -6,18 +6,24 @@
 #' @param file Input rust file to source.
 #' @param code Input rust code, to be used instead of `file`.
 #' @param module_name Name of the module defined in the Rust source via
-#'   `extendr_module!`. Default is `"rextendr"`.
+#'   `extendr_module!`. Default is `"rextendr"`. If `generate_module_macro` is `FALSE`
+#'    or if `file` is specified, should *match exactly* the name of the module defined in the source.
 #' @param dependencies Character vector of dependencies lines to be added to the
 #'   `Cargo.toml` file.
 #' @param patch.crates_io Character vector of patch statements for crates.io to
 #'   be added to the `Cargo.toml` file.
-#' @param profile Rust profile. Can be either `"dev"` or `"release"`. The default,
-#'   `"dev"`, compiles faster but produces slower code.
+#' @param profile Rust profile. Can be either `"dev"`, `"release"` or `"perf"`.
+#'  The default, `"dev"`, compiles faster but produces slower code.
 #' @param toolchain Rust toolchain. The default, `NULL`, compiles with the
 #'  system default toolchain. Accepts valid Rust toolchain qualifiers,
 #'  such as `"nightly"`, or (on Windows) `"stable-msvc"`.
-#' @param extendr_deps Versions of `extendr-*` crates. Defaults to
-#'   \code{list(`extendr-api` = "*")}.
+#' @param extendr_deps Versions of `extendr-*` crates. Defaults to `rextendr.extendr_deps` option
+#'   (\code{list(`extendr-api` = "*")}) if `use_dev_extendr` is not `TRUE`,
+#'   otherwise, uses `rextendr.extendr_dev_deps` option
+#'   (\code{list(`extendr-api` = list(git = "https://github.com/extendr/extendr")}).
+#' @param features A vector of `extendr-api` features that should be enabled.
+#'  Supported values are `"ndarray"`, `"num-complex"`, `"serde"`, and `"graphics"`.
+#'  Unknown features will produce a warning if `quiet` is not `TRUE`.
 #' @param env The R environment in which the wrapping functions will be defined.
 #' @param use_extendr_api Logical indicating whether
 #'   `use extendr_api::prelude::*;` should be added at the top of the Rust source
@@ -36,8 +42,11 @@
 #'   to the `PATH` variable on Windows using the `RTOOLS40_HOME` environment
 #'   variable (if it is set). The appended path depends on the process
 #'   architecture. Does nothing on other platforms.
+#' @param use_dev_extendr Logical indicating whether to use development version of
+#'   `extendr`. Has no effect if `extendr_deps` are set.
 #' @return The result from [dyn.load()], which is an object of class `DLLInfo`.
 #'  See [getLoadedDLLs()] for more details.
+#'
 #' @examples
 #' \dontrun{
 #' # creating a single rust function
@@ -93,38 +102,34 @@ rust_source <- function(file, code = NULL,
                         module_name = "rextendr",
                         dependencies = NULL,
                         patch.crates_io = getOption("rextendr.patch.crates_io"),
-                        profile = c("dev", "release"),
+                        profile = c("dev", "release", "perf"),
                         toolchain = getOption("rextendr.toolchain"),
-                        extendr_deps = getOption("rextendr.extendr_deps"),
+                        extendr_deps = NULL,
+                        features = NULL,
                         env = parent.frame(),
                         use_extendr_api = TRUE,
                         generate_module_macro = TRUE,
                         cache_build = TRUE,
                         quiet = FALSE,
-                        use_rtools = TRUE) {
-  profile <- match.arg(profile)
+                        use_rtools = TRUE,
+                        use_dev_extendr = FALSE) {
+  local_quiet_cli(quiet)
+
+  profile <- rlang::arg_match(profile, multiple = FALSE)
+  features <- validate_extendr_features(features, suppress_warnings = isTRUE(quiet) || isTRUE(use_dev_extendr))
+
   if (is.null(extendr_deps)) {
-    ui_throw(
-      "Invalid argument.",
-      bullet_x("`extendr_deps` cannot be `NULL`.")
-    )
+    if (isTRUE(use_dev_extendr)) {
+      extendr_deps <- getOption("rextendr.extendr_dev_deps")
+    } else {
+      extendr_deps <- getOption("rextendr.extendr_deps")
+    }
   }
 
   dir <- get_build_dir(cache_build)
 
-  # to be used by `system2()` below
   if (!isTRUE(quiet)) {
-    ui_i("build directory: {.file {dir}}")
-
-    # `""` sends `cargo` output to R's standard output.
-    # R console displays to the user informaion about compilation steps and
-    # potenatial compilation errors.
-    out <- ""
-  } else {
-
-    # `NULL` or `FALSE` intercepts standard output from `cargo`.
-    # No compilation information is displayed to the user.
-    out <- NULL
+    cli::cli_alert_info("build directory: {.file {dir}}")
   }
 
   # copy rust code into src/lib.rs and determine library name
@@ -134,20 +139,23 @@ rust_source <- function(file, code = NULL,
       code <- c(code, make_module_macro(code, module_name))
     }
     if (isTRUE(use_extendr_api)) {
-      code <- c("use extendr_api::*;", code)
+      code <- c("use extendr_api::prelude::*;", code)
     }
     brio::write_lines(code, rust_file)
 
     # generate lib name
     libname <- paste0("rextendr", the$count)
-    the$count <- the$count + 1L
   } else {
+    file <- normalizePath(file, winslash = "/")
     file.copy(file, rust_file, overwrite = TRUE)
-    libname <- tools::file_path_sans_ext(basename(file))
+
+    path_hash <- rlang::hash(file)
+    libname <- as_valid_rust_name(paste0(tools::file_path_sans_ext(basename(file)), path_hash, the$count))
   }
+  the$count <- the$count + 1L
 
   if (!isTRUE(cache_build)) {
-    on.exit(clean_build_dir())
+    withr::defer(clean_build_dir())
   }
 
   # generate Cargo.toml file and compile shared library
@@ -155,9 +163,14 @@ rust_source <- function(file, code = NULL,
     libname = libname,
     dependencies = dependencies,
     patch.crates_io = patch.crates_io,
-    extendr_deps = extendr_deps
+    extendr_deps = extendr_deps,
+    features = features
   )
   brio::write_lines(cargo.toml_content, file.path(dir, "Cargo.toml"))
+
+  # add cargo configuration file to the package
+  cargo_config.toml_content <- generate_cargo_config.toml()
+  brio::write_lines(cargo_config.toml_content, file.path(dir, ".cargo", "config.toml"))
 
   # Get target name, not null for Windows
   specific_target <- get_specific_target_name()
@@ -167,13 +180,12 @@ rust_source <- function(file, code = NULL,
     specific_target = specific_target,
     dir = dir,
     profile = profile,
-    stdout = out,
-    stderr = out,
+    quiet = quiet,
     use_rtools = use_rtools
   )
 
   # load shared library
-  libfilename <- paste0(get_dynlib_name(libname), get_dynlib_ext())
+  libfilename <- as_rust_lib_file_name(paste0(get_dynlib_name(libname), get_dynlib_ext()))
 
   target_folder <- ifelse(
     is.null(specific_target),
@@ -184,7 +196,7 @@ rust_source <- function(file, code = NULL,
   shared_lib <- file.path(
     dir,
     target_folder,
-    ifelse(profile == "dev", "debug", "release"),
+    ifelse(profile == "dev", "debug", profile),
     libfilename
   )
 
@@ -196,11 +208,11 @@ rust_source <- function(file, code = NULL,
 
 
   make_wrappers(
-    module_name = module_name,
+    module_name = as_valid_rust_name(module_name),
     package_name = dll_info[["name"]],
     outfile = wrapper_file,
     use_symbols = FALSE,
-    quiet = FALSE
+    quiet = quiet
   )
   source(wrapper_file, local = env)
 
@@ -209,15 +221,52 @@ rust_source <- function(file, code = NULL,
 }
 
 #' @rdname rust_source
+#' @param extendr_fn_options A list of extendr function options that are inserted into
+#'   `#[extendr(...)]` attribute
 #' @param ... Other parameters handed off to [rust_source()].
 #' @export
-rust_function <- function(code, env = parent.frame(), ...) {
+rust_function <- function(code,
+                          extendr_fn_options = NULL,
+                          env = parent.frame(),
+                          quiet = FALSE,
+                          use_dev_extendr = FALSE,
+                          ...) {
+  options <- convert_function_options( # nolint: object_usage_linter
+    options = extendr_fn_options,
+    suppress_warnings = isTRUE(quiet) || isTRUE(use_dev_extendr)
+  )
+
+  if (vctrs::vec_is_empty(options)) {
+    attr_arg <- ""
+  } else {
+    attr_arg <- options %>%
+      glue::glue_data("{Name} = {RustValue}") %>%
+      glue::glue_collapse(sep = ", ")
+    attr_arg <- glue::glue("({attr_arg})")
+  }
+
   code <- c(
-    "#[extendr]",
+    glue::glue("#[extendr{attr_arg}]"),
     stringi::stri_trim(code)
   )
 
-  rust_source(code = code, env = env, ...)
+  rust_source(code = code, env = env, quiet = quiet, use_dev_extendr = use_dev_extendr, ...)
+}
+
+#' Generates valid rust library path given file_name.
+#'
+#' Internally calls [as_valid_rust_name()], but also replaces `-` with `_`, as Rust does.
+#'
+#' @param file_name_no_parent \[string\] File name, no parent.
+#' @returns Sanitized and corrected name.
+#' @noRd
+as_rust_lib_file_name <- function(file_name_no_parent) {
+  ext <- tools::file_ext(file_name_no_parent)
+
+  file_name_no_parent <- tools::file_path_sans_ext(file_name_no_parent)
+  file_name_no_parent <- as_valid_rust_name(file_name_no_parent)
+
+  paste(stringi::stri_replace_all_fixed(file_name_no_parent, "-", "_"), ext, sep = ".")
 }
 
 #' Sets up environment and invokes Rust's cargo.
@@ -232,13 +281,12 @@ rust_function <- function(code, env = parent.frame(), ...) {
 #' @param profile \[string\] Indicates wether to build dev or release versions.
 #'   If `"release"`, emits `--release` argument to `cargo`.
 #'   Otherwise, does nothing.
-#' @param stdout,stderr \[string or `NULL`\] Controls the standard output and standard error of `cargo`.
-#'   Passed unmodified to [system2()].
+#' @param quiet Logical indicating whether compile output should be generated or not.
 #' @param use_rtools \[logical, windows_only\] Indicates wether path RTools should be appended to `PATH` variable
 #'   for the duration of compilation. Has no effect on systems other than Windows.
 #' @noRd
 invoke_cargo <- function(toolchain, specific_target, dir, profile,
-                         stdout, stderr, use_rtools) {
+                         quiet, use_rtools) {
   # Append rtools path to the end of PATH on Windows
   if (
     isTRUE(use_rtools) &&
@@ -251,73 +299,167 @@ invoke_cargo <- function(toolchain, specific_target, dir, profile,
         )
       )
     ) {
-      ui_throw(
-        "Unable to find Rtools that are needed for compilation.",
-        details = bullet_i("Required version is {.emph {pkgbuild::rtools_needed()}}.")
+      cli::cli_abort(
+        c(
+          "Unable to find Rtools that are needed for compilation.",
+          "i" = "Required version is {.emph {pkgbuild::rtools_needed()}}."
+        ),
+        class = "rextendr_error"
       )
     }
 
-    # rtools_path() returns path to the RTOOLS40_HOME\usr\bin,
-    # but we need RTOOLS40_HOME\mingw{argch}\bin, hence the "../.."
-    rtools_home <- normalizePath(
-      file.path(pkgbuild::rtools_path(), "..", ".."),
-      winslash = "/",
-      mustWork = TRUE
-    )
+    if (identical(R.version$crt, "ucrt")) {
+      # TODO: update this when R 5.0 is released.
+      if (!identical(R.version$major, "4")) {
+        cli::cli_abort("rextendr currently supports R 4.x", class = "rextendr_error")
+      }
 
-    rtools_bin_path <-
-      normalizePath(
-        file.path(
-          rtools_home,
-          paste0("mingw", ifelse(R.version$arch == "i386", "32", "64")),
-          "bin"
-        )
+      if (package_version(R.version$minor) >= "3.0") {
+        rtools_version <- "43" # nolint: object_usage_linter
+      } else {
+        rtools_version <- "42" # nolint: object_usage_linter
+      }
+
+      rtools_home <- normalizePath(
+        Sys.getenv(
+          glue("RTOOLS{rtools_version}_HOME"),
+          glue("C:\\rtools{rtools_version}")
+        ),
+        mustWork = TRUE
       )
-    # Appends path to rtools\mingw{arch}\bin using a correct arch
+
+      # c.f. https://github.com/wch/r-source/blob/f09d3d7fa4af446ad59a375d914a0daf3ffc4372/src/library/profile/Rprofile.windows#L70-L71 # nolint: line_length_linter
+      subdir <- c("x86_64-w64-mingw32.static.posix", "usr")
+    } else {
+      # rtools_path() returns path to the RTOOLS40_HOME\usr\bin,
+      # but we need RTOOLS40_HOME\mingw{arch}\bin, hence the "../.."
+      rtools_home <- normalizePath(
+        # `pkgbuild` may return two paths for R < 4.2 with Rtools40v2
+        file.path(pkgbuild::rtools_path()[1], "..", ".."),
+        winslash = "/",
+        mustWork = TRUE
+      )
+
+      subdir <- paste0("mingw", ifelse(R.version$arch == "i386", "32", "64"))
+      # If RTOOLS40_HOME is properly set, this will have no real effect
+      withr::local_envvar(RTOOLS40_HOME = rtools_home)
+    }
+
+    rtools_bin_path <- normalizePath(file.path(rtools_home, subdir, "bin"))
     withr::local_path(rtools_bin_path, action = "suffix")
-    # If RTOOLS40_HOME is properly set, this will have no real effect
-    withr::local_envvar(RTOOLS40_HOME = rtools_home)
   }
-  status <- system2(
+
+  message_buffer <- character(0)
+  env <- rlang::current_env()
+  cargo_envvars <- get_cargo_envvars()
+
+  compilation_result <- processx::run(
     command = "cargo",
     args = c(
-      sprintf("+%s", toolchain),
+      glue("+{toolchain}"),
       "build",
       "--lib",
-      if (!is.null(specific_target)) sprintf("--target %s", specific_target) else NULL,
-      sprintf("--manifest-path %s", file.path(dir, "Cargo.toml")),
-      sprintf("--target-dir %s", file.path(dir, "target")),
-      if (profile == "release") "--release" else NULL
+      glue("--target={specific_target}"),
+      glue("--manifest-path={file.path(dir, 'Cargo.toml')}"),
+      glue("--target-dir={file.path(dir, 'target')}"),
+      glue("--profile={profile}"),
+      "--message-format=json-diagnostic-rendered-ansi",
+      if (tty_has_colors()) {
+        "--color=always"
+      } else {
+        "--color=never"
+      }
     ),
-    stdout = stdout,
-    stderr = stderr
+    echo_cmd = FALSE,
+    windows_verbatim_args = FALSE,
+    stderr = if (isTRUE(quiet)) "|" else "",
+    stdout = "|",
+    error_on_status = FALSE,
+    stdout_line_callback = function(line, ...) {
+      assign("message_buffer", c(message_buffer, line), envir = env)
+    },
+    env = cargo_envvars
   )
-  if (status != 0L) {
-    ui_throw("Rust code could not be compiled successfully. Aborting.")
+
+  check_cargo_output(compilation_result, message_buffer, tty_has_colors(), quiet)
+}
+
+#' Gathers ANSI-formatted cargo output
+#'
+#' Checks the output of cargo and filters messages according to `level`.
+#' Retrieves rendered ANSI strings and prepares them
+#' for `cli` and `glue` formatting.
+#' @param json_output \[ JSON(n) \] JSON messages produced by cargo.
+#' @param level \[ string \] Log level.
+#' Commonly used values are `"error"` and `"warning"`.
+#' @param tty_has_colors \[ logical(1) \] Indicates if output
+#' supports ANSI sequences. If `FALSE`, ANSI sequences are stripped off.
+#' @return \[ character(n) \] Vector of strings
+#' that can be passed to `cli` or `glue` functions.
+#' @noRd
+gather_cargo_output <- function(json_output, level, tty_has_colors) {
+  rendered_output <-
+    json_output %>%
+    purrr::keep(
+      ~ .x$reason == "compiler-message" && .x$message$level == level
+    ) %>%
+    purrr::map_chr(~ .x$message$rendered)
+
+  if (!tty_has_colors) {
+    rendered_output <- cli::ansi_strip(rendered_output)
+  }
+
+  stringi::stri_replace_all_fixed(
+    rendered_output,
+    pattern = c("{", "}"),
+    replacement = c("{{", "}}"),
+    vectorize_all = FALSE
+  )
+}
+
+#' Processes output of cargo compilation process.
+#'
+#' Displays warnings emitted by the compiler
+#' and throws errors if compilation was unsuccessful.
+#' @param compilation_result The output of `processx::run()`.
+#' @param message_buffer \[ character(n) \] Messages emitted by cargo to stdout.
+#' @param tty_has_colors \[ logical(1) \] Indicates if output
+#' supports ANSI sequences. If `FALSE`, ANSI sequences are stripped off.
+#' @param quiet Logical indicating whether compile output should be generated or not.
+#' @param call Caller environment used for error message formatting.
+#' @noRd
+check_cargo_output <- function(compilation_result, message_buffer, tty_has_colors, quiet, call = caller_env()) {
+  cargo_output <- purrr::map(
+    message_buffer,
+    jsonlite::parse_json
+  )
+
+  if (!isTRUE(compilation_result$status == 0)) {
+    error_messages <-
+      gather_cargo_output(
+        cargo_output,
+        "error",
+        tty_has_colors
+      ) %>%
+        purrr::map_chr(
+          cli::format_inline,
+          keep_whitespace = TRUE
+        ) %>%
+        # removing double new lines with single new line
+        stringi::stri_replace_all_fixed("\n\n", "\n") %>%
+        # ensures that the leading cli style `x` is there
+        rlang::set_names("x")
+
+      rlang::abort(
+        c(
+          "Rust code could not be compiled successfully. Aborting.",
+          error_messages
+        ),
+        call = call,
+        class = "rextendr_error"
+    )
   }
 }
-
-generate_cargo.toml <- function(libname = "rextendr",
-                                dependencies = NULL,
-                                patch.crates_io = NULL,
-                                extendr_deps = NULL) {
-  to_toml(
-    package = list(
-      name = libname,
-      version = "0.0.1",
-      edition = "2018"
-    ),
-    lib = list(
-      `crate-type` = array("cdylib", 1)
-    ),
-    dependencies = append(
-      extendr_deps,
-      dependencies
-    ),
-    `patch.crates-io` = patch.crates_io
-  )
-}
-
 
 get_dynlib_ext <- function() {
   # .Platform$dynlib.ext is not reliable on OS X, so need to work around it
@@ -332,7 +474,7 @@ get_dynlib_ext <- function() {
 }
 
 get_dynlib_name <- function(libname) {
-  libfilename <- if (.Platform$OS.type == "windows") {
+  if (.Platform$OS.type == "windows") {
     libname
   } else {
     paste0("lib", libname)
@@ -351,7 +493,10 @@ get_specific_target_name <- function() {
       return("i686-pc-windows-gnu")
     }
 
-    ui_throw("Unknown Windows architecture")
+    cli::cli_abort(
+      "Unknown Windows architecture",
+      class = "rextendr_error"
+    )
   }
 
   return(NULL)
@@ -371,7 +516,8 @@ get_build_dir <- function(cache_build) {
     dir.create(dir)
     dir.create(file.path(dir, "R"))
     dir.create(file.path(dir, "src"))
-    the$build_dir <- dir
+    dir.create(file.path(dir, ".cargo"))
+    the$build_dir <- normalizePath(dir, winslash = "/")
   }
   the$build_dir
 }

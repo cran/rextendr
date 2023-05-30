@@ -66,6 +66,7 @@ test_that("Macro generation fails on invalid rust code", {
   )
 })
 
+
 test_that("Macro generation fails on invalid comments in code", {
   expect_rextendr_error(
     make_module_macro("/*/*/**/"),
@@ -109,7 +110,7 @@ test_that("Rust code cleaning", {
   )
 
   expect_equal(
-    clean_rust_code(c(
+    sanitize_rust_code(c(
       "/* Comment #1 */",
       "   // Comment #2",
       "              ",
@@ -126,9 +127,12 @@ test_that("Rust metadata capturing", {
       "#[extendr]",
       "    # 3  ",
       " #\t [ \textendr   ]",
-      "#5"
+      "#5",
+      "#[extendr(some_option=true)]",
+      "#[extendr ( some_option =  true ) ]",
+      "#[extendr()]"
     )),
-    c(2L, 4L)
+    c(2L, 4L, 6L, 7L, 8L)
   )
 
   expect_equal(

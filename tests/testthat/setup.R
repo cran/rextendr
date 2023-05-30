@@ -1,3 +1,1 @@
-old_test_settings <- options(
-  usethis.quiet = TRUE
-)
+withr::local_options(usethis.quiet = TRUE, .local_envir = teardown_env())

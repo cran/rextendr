@@ -15,7 +15,7 @@
 #' @param path Path from which package root is looked up.
 #' @param quiet Logical indicating whether any progress messages should be
 #'   generated or not.
-#' @param force Logical indicating whether to force re-generating
+#' @param force Logical indicating whether to force regenerating
 #'   `R/extendr-wrappers.R` even when it doesn't seem to need updated. (By
 #'   default, generation is skipped when it's newer than the DLL).
 #' @param compile Logical indicating whether to recompile DLLs:
@@ -28,20 +28,23 @@
 #' @seealso [rextendr::document()]
 #' @export
 register_extendr <- function(path = ".", quiet = FALSE, force = FALSE, compile = NA) {
+  local_quiet_cli(quiet)
+
+  rextendr_setup(path = path)
+
   pkg_name <- pkg_name(path)
 
-  if (!isTRUE(quiet)) {
-    ui_i("Generating extendr wrapper functions for package: {.pkg {pkg_name}}.")
-  }
+  cli::cli_alert_info("Generating extendr wrapper functions for package: {.pkg {pkg_name}}.")
 
   entrypoint_c_file <- rprojroot::find_package_root_file("src", "entrypoint.c", path = path)
   if (!file.exists(entrypoint_c_file)) {
-    ui_throw(
-      "Unable to register the extendr module.",
+    cli::cli_abort(
       c(
-        bullet_x("Could not find file {.file src/entrypoint.c }."),
-        bullet_o("Are you sure this package is using extendr Rust code?")
-      )
+        "Unable to register the extendr module.",
+        "x" = "Could not find file {.file src/entrypoint.c}.",
+        "*" = "Are you sure this package is using extendr Rust code?"
+      ),
+      class = "rextendr_error"
     )
   }
 
@@ -49,20 +52,9 @@ register_extendr <- function(path = ".", quiet = FALSE, force = FALSE, compile =
 
   path <- rprojroot::find_package_root_file(path = path)
 
-  # If compile is NA, compile if the DLL is newer than the source files
-  if (isTRUE(is.na(compile))) {
-    compile <- needs_compilation(path, quiet) || pkgbuild::needs_compile(path)
-  }
-
-  if (isTRUE(compile)) {
-    # This relies on [`pkgbuild::needs_compile()`], which
-    # does not know about Rust files modifications.
-    # `force = TRUE` enforces compilation.
-    pkgbuild::compile_dll(
-      path = path,
-      force = TRUE,
-      quiet = quiet
-    )
+  if (!isFALSE(compile)) {
+    # As of version 1.4.0, pkgbuild can detect the changes in Rust code.
+    pkgbuild::compile_dll(path = path, quiet = quiet, force = compile)
   }
 
   library_path <- get_library_path(path)
@@ -71,23 +63,26 @@ register_extendr <- function(path = ".", quiet = FALSE, force = FALSE, compile =
     msg <- "{library_path} doesn't exist"
     if (isTRUE(compile)) {
       # If it doesn't exist even after compile, we have no idea what happened
-      ui_throw(msg)
+      cli::cli_abort(msg, class = "rextendr_error")
     } else {
       # If compile wasn't invoked, it might succeed with explicit "compile = TRUE"
-      ui_throw(
-        msg,
-        bullet_i("You need to compile first, try {.code register_rextendr(compile = TRUE)}.")
+      cli::cli_abort(
+        c(
+          msg,
+          "i" = "You need to compile first, try {.code register_rextendr(compile = TRUE)}."
+        ),
+        class = "rextendr_error"
       )
     }
   }
 
   # If the wrapper file is newer than the DLL file, assume it's been generated
-  # by the latest DLL, which should mean it doesn't need to be re-generated.
+  # by the latest DLL, which should mean it doesn't need to be regenerated.
   # This isn't always the case (e.g. when the user accidentally edited the
   # wrapper file by hand) so the user might need to run with `force = TRUE`.
-  if (!isTRUE(force) && length(find_newer_files_than(outfile, library_path)) > 0) {
-    rel_path <- pretty_rel_path(outfile, path)
-    ui_i("{.file {rel_path}} is up-to-date. Skip generating wrapper functions.")
+  if (!isTRUE(force) && isTRUE(file.info(outfile)[["mtime"]] > file.info(library_path)[["mtime"]])) {
+    rel_path <- pretty_rel_path(outfile, path) # nolint: object_usage_linter
+    cli::cli_alert_info("{.file {rel_path}} is up-to-date. Skip generating wrapper functions.")
 
     return(invisible(character(0L)))
   }
@@ -96,7 +91,7 @@ register_extendr <- function(path = ".", quiet = FALSE, force = FALSE, compile =
     # Call the wrapper generation in a separate R process to avoid the problem
     # of loading and unloading the same name of a DLL (c.f. #64).
     make_wrappers_externally(
-      module_name = pkg_name,
+      module_name = as_valid_rust_name(pkg_name),
       package_name = pkg_name,
       outfile = outfile,
       path = path,
@@ -104,9 +99,9 @@ register_extendr <- function(path = ".", quiet = FALSE, force = FALSE, compile =
       quiet = quiet
     ),
     error = function(e) {
-      ui_throw(
-        "Failed to generate wrapper functions.",
-        bullet_x(e[["message"]])
+      cli::cli_abort(
+        c("Failed to generate wrapper functions.", x = e[["message"]]),
+        class = "rextendr_error"
       )
     }
   )
@@ -139,10 +134,20 @@ make_wrappers <- function(module_name, package_name, outfile,
     package_name = package_name,
     PACKAGE = package_name
   )
-  x <- stringi::stri_split_lines1(x)
+  generated_wrappers <- stringi::stri_split_lines1(x)
+
+  generated_wrappers <- c(
+    generated_wrappers[1],
+    "",
+    "# nolint start",
+    "",
+    generated_wrappers[-1],
+    "",
+    "# nolint end"
+  )
 
   write_file(
-    text = x,
+    text = generated_wrappers,
     path = outfile,
     search_root_from = path,
     quiet = quiet
@@ -163,7 +168,7 @@ make_wrappers_externally <- function(module_name, package_name, outfile,
     # Loads native library
     lib <- dyn.load(library_path)
     # Registers library unloading to be invoked at the end of this function
-    on.exit(dyn.unload(lib[["path"]]), add = TRUE)
+    withr::defer(dyn.unload(lib[["path"]]))
 
     make_wrappers(
       module_name = module_name,

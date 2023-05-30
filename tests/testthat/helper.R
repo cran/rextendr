@@ -5,7 +5,7 @@
 #'
 #' @param ... arguments passed to [testthat::expect_error()]
 expect_rextendr_error <- function(...) {
-  expect_error(..., class = "rextendr_error")
+  testthat::expect_error(..., class = "rextendr_error")
 }
 
 #' Create a local package
@@ -41,10 +41,10 @@ local_package <- function(nm, envir = parent.frame()) {
 #'   attached, usually the `parent.frame()` to exist locally
 #'
 #' @return A path to the temporary directory
-local_temp_dir <- function(envir = parent.frame()) {
+local_temp_dir <- function(..., envir = parent.frame()) {
   current_wd <- getwd()
-  path <- tempfile()
-  dir.create(path)
+  path <- file.path(tempfile(), ...)
+  dir.create(path, recursive = TRUE)
 
   setwd(path)
 
@@ -73,3 +73,19 @@ local_proj_set <- function(envir = parent.frame()) {
   withr::defer(usethis::proj_set(old_proj), envir = envir)
 }
 
+#' Helper function for snapshot testing.
+#' Wraps `brio::read_file` and writes content to output using `cat`.
+#' @param ... Path to the file being read.
+#' @noRd
+cat_file <- function(...) {
+  cat(brio::read_file(file.path(...)))
+}
+
+#' Helper function for skipping tests when cargo subcommand is unavailable
+#' @param args Character vector, arguments to the `cargo` command. Pass to [processx::run()]'s args param.
+skip_if_cargo_bin <- function(args = "--help") {
+  if (processx::run("cargo", args, error_on_status = FALSE)$status != 0) {
+    message <- paste0("`cargo ", paste0(args, collapse = " "), "` is not available.")
+    testthat::skip(message)
+  }
+}
