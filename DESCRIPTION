@@ -1,6 +1,6 @@
 Package: rextendr
 Title: Call Rust Code from R using the 'extendr' Crate
-Version: 0.3.0
+Version: 0.3.1
 Authors@R: 
     c(person(given = "Claus O.",
              family = "Wilke",
@@ -55,7 +55,7 @@ RoxygenNote: 7.2.3
 SystemRequirements: Rust 'cargo'; the crate 'libR-sys' must compile
         without error
 NeedsCompilation: no
-Packaged: 2023-05-29 07:46:15 UTC; iliak
+Packaged: 2023-06-19 14:32:40 UTC; iliak
 Author: Claus O. Wilke [aut] (<https://orcid.org/0000-0002-7470-9261>),
   Andy Thomason [aut],
   Mossa M. Reimert [aut],
@@ -65,4 +65,4 @@ Author: Claus O. Wilke [aut] (<https://orcid.org/0000-0002-7470-9261>),
   Josiah Parry [ctb] (<https://orcid.org/0000-0001-9910-865X>)
 Maintainer: Ilia Kosenkov <ilia.kosenkov@outlook.com>
 Repository: CRAN
-Date/Publication: 2023-05-30 14:40:02 UTC
+Date/Publication: 2023-06-20 18:20:02 UTC

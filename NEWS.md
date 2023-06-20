@@ -1,3 +1,7 @@
+# rextend 0.3.1
+
+* Update package templates to work with Rust >= 1.70 (#285)
+
 # rextendr 0.3.0
 
 * Ilia Kosenkov is now the official maintainer.
