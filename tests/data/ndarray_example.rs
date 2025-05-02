@@ -1,7 +1,8 @@
 use extendr_api::prelude::*;
+use ndarray::ArrayView2;
 
-#[extendr(use_try_from = true)]
-fn matrix_sum(input : ArrayView2<Rfloat>) -> Rfloat {
+#[extendr]
+fn matrix_sum(input: ArrayView2<Rfloat>) -> Rfloat {
     input.iter().sum()
 }
 

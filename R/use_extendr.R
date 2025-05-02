@@ -5,10 +5,6 @@
 #' `"Hello world!"`. It also adds wrapper code so this Rust function can be called from
 #' R with `hello_world()`.
 #'
-#' To avoid possibly messing up your R package, `use_extendr()` will not do anything if
-#' either a directory `src` or a file `R/extendr-wrappers.R` is already present in your
-#' package source.
-#'
 #' @param path File path to the package for which to generate wrapper code.
 #' @param crate_name String that is used as the name of the Rust crate.
 #' If `NULL`, sanitized R package name is used instead.
@@ -16,22 +12,59 @@
 #' If `NULL`, sanitized R package name is used instead.
 #' @param quiet Logical indicating whether any progress messages should be
 #'   generated or not.
+#' @param overwrite Logical scalar or `NULL` indicating whether the files in the `path` should be overwritten.
+#' If `NULL` (default), the function will ask the user whether each file should
+#' be overwritten in an interactive session or do nothing in a non-interactive session.
+#' If `FALSE` and each file already exists, the function will do nothing.
+#' If `TRUE`, all files will be overwritten.
 #' @param edition String indicating which Rust edition is used; Default `"2021"`.
 #' @return A logical value (invisible) indicating whether any package files were
 #' generated or not.
 #' @export
-use_extendr <- function(path = ".",
-                        crate_name = NULL,
-                        lib_name = NULL,
-                        quiet = FALSE,
-                        edition = c("2021", "2018")) {
+use_extendr <- function(
+  path = ".",
+  crate_name = NULL,
+  lib_name = NULL,
+  quiet = FALSE,
+  overwrite = NULL,
+  edition = c("2021", "2018")
+) {
   # https://github.com/r-lib/cli/issues/434
 
   local_quiet_cli(quiet)
 
-  rextendr_setup(path = path)
+  if (!interactive()) {
+    overwrite <- overwrite %||% FALSE
+  }
 
-  pkg_name <- pkg_name(path)
+  rlang::check_installed("usethis")
+
+  # Root path computed from user input
+  root_path <- try_get_root_path(path)
+  # Root path computed from `{usethis}`
+  usethis_proj_path <- try_get_proj_path()
+
+  # If they do not match, something is off, try to set up temporary project
+  if (!isTRUE(root_path == usethis_proj_path)) {
+    usethis::local_project(path, quiet = quiet)
+  }
+
+  # Check project path once again
+  usethis_proj_path <- try_get_proj_path()
+  # Check what is current working directory
+  curr_path <- try_get_normalized_path(getwd)
+
+  # If they do not match, let's temporarily change working directory
+  if (!isTRUE(curr_path == usethis_proj_path)) {
+    withr::local_dir(usethis_proj_path)
+  }
+
+  # At this point, our working directory is at the project root and
+  # we have an active `{usethis}` project
+
+  rextendr_setup()
+
+  pkg_name <- pkg_name()
   mod_name <- as_valid_rust_name(pkg_name)
 
   if (is.null(crate_name)) {
@@ -46,85 +79,79 @@ use_extendr <- function(path = ".",
     throw_if_invalid_rust_name(lib_name)
   }
 
-  src_dir <- rprojroot::find_package_root_file("src", path = path)
-  r_dir <- rprojroot::find_package_root_file("R", path = path)
-  wrappers_file <- rprojroot::find_package_root_file("R", "extendr-wrappers.R", path = path)
-  if (!dir.exists(r_dir)) {
-    cli::cli_alert_success("Writing {.file R/}")
-    dir.create(r_dir)
-  }
+  src_dir <- rprojroot::find_package_root_file("src")
+  r_dir <- rprojroot::find_package_root_file("R")
 
-  if (dir.exists(src_dir)) {
-    cli::cli_alert_danger(
-      "Directory {.file src} already present in package source. No action taken."
-    )
-    return(invisible(FALSE))
-  }
-  if (file.exists(wrappers_file)) {
-    cli::cli_alert_danger(
-      "File {.file R/extendr-wrappers.R} already present in package source. No action taken."
-    )
-    return(invisible(FALSE))
+  if (!dir.exists(r_dir)) {
+    dir.create(r_dir)
+    cli::cli_alert_success("Creating {.file {pretty_rel_path(r_dir, path)}}.")
   }
 
   rust_src_dir <- file.path(src_dir, "rust", "src")
-  dir.create(rust_src_dir, recursive = TRUE)
-  cli::cli_alert_success("Creating {.file {pretty_rel_path(rust_src_dir, path)}}.")
+  if (!dir.exists(rust_src_dir)) {
+    dir.create(rust_src_dir, recursive = TRUE)
+    cli::cli_alert_success(
+      "Creating {.file {pretty_rel_path(rust_src_dir, path)}}."
+    )
+  }
 
   use_rextendr_template(
     "entrypoint.c",
     save_as = file.path("src", "entrypoint.c"),
     quiet = quiet,
+    overwrite = overwrite,
     data = list(mod_name = mod_name)
   )
 
   use_rextendr_template(
-    "Makevars",
-    save_as = file.path("src", "Makevars"),
+    "Makevars.in",
+    save_as = file.path("src", "Makevars.in"),
     quiet = quiet,
+    overwrite = overwrite,
     data = list(lib_name = lib_name)
   )
 
   use_rextendr_template(
-    "Makevars.win",
-    save_as = file.path("src", "Makevars.win"),
+    "Makevars.win.in",
+    save_as = file.path("src", "Makevars.win.in"),
     quiet = quiet,
-    data = list(lib_name = lib_name)
-  )
-
-  use_rextendr_template(
-    "Makevars.ucrt",
-    save_as = file.path("src", "Makevars.ucrt"),
-    quiet = quiet,
+    overwrite = overwrite,
     data = list(lib_name = lib_name)
   )
 
   use_rextendr_template(
     "_gitignore",
     save_as = file.path("src", ".gitignore"),
-    quiet = quiet
+    quiet = quiet,
+    overwrite = overwrite
   )
-
-  usethis::use_build_ignore("src/.cargo")
 
   edition <- match.arg(edition, several.ok = FALSE)
   cargo_toml_content <- to_toml(
-    package = list(name = crate_name, version = "0.1.0", edition = edition),
+    package = list(
+      name = crate_name,
+      publish = FALSE,
+      version = "0.1.0",
+      edition = edition,
+      `rust-version` = "1.65"
+    ),
     lib = list(`crate-type` = array("staticlib", 1), name = lib_name),
     dependencies = list(`extendr-api` = "*")
   )
 
-  write_file(
-    text = cargo_toml_content,
-    path = file.path("src", "rust", "Cargo.toml"),
-    search_root_from = path,
-    quiet = quiet
+  use_rextendr_template(
+    "Cargo.toml",
+    save_as = file.path("src", "rust", "Cargo.toml"),
+    quiet = quiet,
+    overwrite = overwrite,
+    data = list(cargo_toml_content = cargo_toml_content)
   )
 
   use_rextendr_template(
     "lib.rs",
     save_as = file.path("src", "rust", "src", "lib.rs"),
     quiet = quiet,
+    overwrite = overwrite,
     data = list(mod_name = mod_name)
   )
 
@@ -132,6 +159,7 @@ use_extendr <- function(path = ".",
     "win.def",
     save_as = file.path("src", paste0(pkg_name, "-win.def")),
     quiet = quiet,
+    overwrite = overwrite,
     data = list(mod_name = mod_name)
   )
 
@@ -139,20 +167,110 @@ use_extendr <- function(path = ".",
     "extendr-wrappers.R",
     save_as = file.path("R", "extendr-wrappers.R"),
     quiet = quiet,
+    overwrite = FALSE,
     data = list(pkg_name = pkg_name)
   )
 
+  # create tools directory if it does not exist
+  if (!dir.exists("tools")) {
+    dir.create("tools")
+  }
+
+  # add msrv.R template
+  use_rextendr_template(
+    "msrv.R",
+    save_as = file.path("tools", "msrv.R"),
+    quiet = quiet,
+    overwrite = overwrite
+  )
+
+  # add config.R template
+  use_rextendr_template(
+    "config.R",
+    save_as = file.path("tools", "config.R"),
+    quiet = quiet,
+    overwrite = overwrite
+  )
+
+  # add configure and configure.win templates
+  use_rextendr_template(
+    "configure",
+    save_as = "configure",
+    quiet = quiet,
+    overwrite = overwrite,
+    data = list(lib_name = lib_name)
+  )
+
+  use_rextendr_template(
+    "configure.win",
+    save_as = "configure.win",
+    quiet = quiet,
+    overwrite = overwrite,
+    data = list(lib_name = lib_name)
+  )
+
+  # configure needs to be made executable
+  # ignore for Windows
+  if (.Platform[["OS.type"]] == "unix") {
+    Sys.chmod("configure", "0755")
+  }
+
+  # Set the minimum version of R to 4.2 which is 64 bit
+  usethis::use_package("R", "Depends", "4.2")
+
+  # the temporary cargo directory must be ignored
+  usethis::use_build_ignore("src/.cargo")
+
+  # ensure that the vendor directory is ignored
+  usethis::use_build_ignore(
+    file.path("src", "rust", "vendor")
+  )
+
+  usethis::use_git_ignore(
+    file.path("src", "rust", "vendor")
+  )
+
+  # ensure that the target directory is ignored
+  usethis::use_build_ignore(
+    file.path("src", "rust", "target")
+  )
+
+  # the src/Makevars should be created each time the package
+  # is built. This is handled via the configure file
+  usethis::use_build_ignore("src/Makevars")
+  usethis::use_git_ignore("src/Makevars")
+  usethis::use_build_ignore("src/Makevars.win")
+  usethis::use_git_ignore("src/Makevars.win")
+
   if (!isTRUE(quiet)) {
-    cli::cli_alert_success("Finished configuring {.pkg extendr} for package {.pkg {pkg_name}}.")
+    cli::cli_alert_success(
+      "Finished configuring {.pkg extendr} for package {.pkg {pkg_name}}."
+    )
     cli::cli_ul(
       c(
-        "Please update the system requirement in {.file DESCRIPTION} file.",
         "Please run {.fun rextendr::document} for changes to take effect."
       )
     )
   }
 
   return(invisible(TRUE))
+}
+
+try_get_normalized_path <- function(path_fn) {
+  tryCatch(
+    normalizePath(path_fn(), winslash = "/", mustWork = FALSE),
+    error = function(e) NA
+  )
+}
+
+try_get_proj_path <- function() {
+  try_get_normalized_path(usethis::proj_get)
+}
+
+try_get_root_path <- function(path) {
+  try_get_normalized_path(
+    function() rprojroot::find_package_root_file(path = path)
+  )
 }
 
 #' Checks if provided name is a valid Rust name (identifier)
@@ -206,15 +324,29 @@ throw_if_invalid_rust_name <- function(name, call = caller_env()) {
 #'
 #' @inheritParams usethis::use_template
 #' @inheritParams use_extendr
-#'
+#' @param overwrite Logical scalar or `NULL` indicating whether the file in the `path` should be overwritten.
+#' If `FALSE` and the file already exists, the function will do nothing.
+#' If `NULL` and the `usethis` package is installed, the function will ask the user whether the file should
+#' be overwritten in an interactive session or do nothing in a non-interactive session.
+#' Otherwise, the file will be overwritten.
 #' @noRd
-use_rextendr_template <- function(template,
-                                  save_as = template,
-                                  data = list(),
-                                  quiet = FALSE) {
+use_rextendr_template <- function(
+  template,
+  save_as = template,
+  data = list(),
+  quiet = FALSE,
+  overwrite = NULL
+) {
   local_quiet_cli(quiet)
 
-  if (is_installed("usethis")) {
+  if (isFALSE(overwrite) && file.exists(save_as)) {
+    cli::cli_alert(
+      "File {.path {save_as}} already exists. Skip writing the file."
+    )
+    return(invisible(NULL))
+  }
+
+  if (is_installed("usethis") && is.null(overwrite)) {
     created <- usethis::use_template(
       template,
       save_as = save_as,
@@ -238,7 +370,8 @@ use_rextendr_template <- function(template,
   template_content <- glue::glue_data(
     template_content,
     .x = data,
-    .open = "{{{", .close = "}}}",
+    .open = "{{{",
+    .close = "}}}",
     .trim = FALSE
   )
 
@@ -246,7 +379,8 @@ use_rextendr_template <- function(template,
     stringi::stri_trim(template_content),
     path = save_as,
     search_root_from = rprojroot::find_package_root_file(),
-    quiet = quiet
+    quiet = quiet,
+    overwrite = overwrite
   )
 
   invisible(TRUE)

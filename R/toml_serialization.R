@@ -41,7 +41,7 @@ to_toml <- function(...,
   names <- names2(args)
 
   # We disallow unnamed top-level atomic arguments
-  invalid <- which(purrr::map2_lgl(names, args, ~ !nzchar(.x) && is.atomic(.y)))
+  invalid <- which(map2_lgl(names, args, \(.x, .y) !nzchar(.x) && is.atomic(.y)))
 
   # If such args found, display an error message
   if (length(invalid) > 0) {
@@ -55,7 +55,7 @@ to_toml <- function(...,
     )
   }
 
-  tables <- map2_chr(names, args, function(nm, a) {
+  tables <- map2(names, args, function(nm, a) {
     header <- make_header(nm, a)
     body <- format_toml(
       a,
@@ -66,11 +66,16 @@ to_toml <- function(...,
       .format_dbl = .format_dbl
     )
     body <- glue_collapse(body, "\n")
+    if (!nzchar(body)) {
+      body <- NULL
+    }
+
     # The values can be (1) header and body, (2) header only, or (3) body only.
     # In the case of (2) and (3) the other element is of length 0, so we need to
     # remove them by `c()` first, and then concatenate by "\n" if both exists
     glue_collapse(c(header, body), "\n")
   })
+
   glue_collapse(tables, "\n\n")
 }
 
@@ -92,18 +97,19 @@ get_toml_missing_msg <- function() {
 simplify_row <- function(row) {
   result <- map_if(
     row,
-    ~ is.list(.x) && all(!nzchar(names2(.x))),
-    ~ .x[[1]],
-    .else = ~.x
+    \(.x) is.list(.x) && all(!nzchar(names2(.x))),
+    \(.x) .x[1],
+    .else = identity
   )
   discard(
     result,
-    ~ is_na(.x) || is_null(unlist(.x))
+    \(.x) is_na(.x) || is_null(unlist(.x))
   )
 }
 
 format_toml <- function(x, ..., .top_level = FALSE) UseMethod("format_toml")
 
+#' @export
 format_toml.default <- function(x, ..., .top_level = FALSE) {
   cli::cli_abort(c(
     get_toml_err_msg(),
@@ -111,6 +117,7 @@ format_toml.default <- function(x, ..., .top_level = FALSE) {
   ), class = "rextendr_error")
 }
 
+#' @export
 format_toml.data.frame <- function(x,
                                    ...,
                                    .tbl_name,
@@ -128,25 +135,27 @@ format_toml.data.frame <- function(x,
         if (length(item) == 0L) {
           result <- character(0)
         } else {
+
           result <- format_toml(
-            item,
+            as.list(item),
             ...,
             .top_level = TRUE
           )
         }
         if (!is_atomic(result)) {
-          result <- flatten_chr(result)
+          result <- list_c(result)
         }
 
         c(header, result)
       }
     )
-  flatten_chr(result)
+  list_c(result)
 }
 
 # This handles missing args
 # `to_toml(workspace = )` results into
 # [workspace] with no children
+#' @export
 format_toml.name <- function(x, ..., .top_level = FALSE) {
   if (isTRUE(.top_level)) {
     if (is_missing(x)) {
@@ -169,6 +178,7 @@ format_toml.name <- function(x, ..., .top_level = FALSE) {
 }
 
 # `NULL` is equivalent to missing arg
+#' @export
 format_toml.NULL <- function(x, ..., .top_level = FALSE) {
   if (isTRUE(.top_level)) {
     return(character(0))
@@ -192,8 +202,8 @@ format_toml_atomic <- function(x,
   if (len == 0L) {
     "[ ]"
   } else {
-    formatter <- as_function(.formatter)
-    items <- glue_collapse(formatter(x, ...), ", ")
+    formatter <- rlang::as_function(.formatter)
+    items <- glue_collapse(formatter(x), ", ")
     if (len > 1L || !is.null(dims)) {
       items <- glue("[ {items} ]")
     }
@@ -207,14 +217,15 @@ escape_dbl_quotes <- function(x) {
   stri_replace_all_regex(x, "([\"])", r"(\\$1)")
 }
 
+#' @export
 format_toml.character <- function(x,
                                   ...,
                                   .str_as_literal = TRUE,
                                   .top_level = FALSE) {
   if (isTRUE(.str_as_literal)) {
-    .formatter <- ~ glue("'{.x}'")
+    .formatter <- \(.x) glue("'{.x}'")
   } else {
-    .formatter <- ~ glue("\"{escape_dbl_quotes(.x)}\"")
+    .formatter <- \(.x) glue("\"{escape_dbl_quotes(.x)}\"")
   }
   format_toml_atomic(
     x,
@@ -225,6 +236,7 @@ format_toml.character <- function(x,
   )
 }
 
+#' @export
 format_toml.integer <- function(x,
                                 ...,
                                 .format_int = "%d",
@@ -234,10 +246,11 @@ format_toml.integer <- function(x,
     ...,
     .format_int = .format_int,
     .top_level = FALSE,
-    .formatter = ~ sprintf(.format_int, .x)
+    .formatter = \(.x) sprintf(.format_int, .x)
   )
 }
 
+#' @export
 format_toml.double <- function(x,
                                ...,
                                .format_dbl = "%g",
@@ -247,10 +260,11 @@ format_toml.double <- function(x,
     ...,
     .format_dbl = .format_dbl,
     .top_level = FALSE,
-    .formatter = ~ sprintf(.format_dbl, .x)
+    .formatter = \(.x) sprintf(.format_dbl, .x)
   )
 }
 
+#' @export
 format_toml.logical <- function(x,
                                 ...,
                                 .top_level = FALSE) {
@@ -258,10 +272,11 @@ format_toml.logical <- function(x,
     x,
     ...,
     .top_level = FALSE,
-    .formatter = ~ ifelse(.x, "true", "false")
+    .formatter = \(.x) ifelse(.x, "true", "false")
   )
 }
 
+#' @export
 format_toml.list <- function(x, ..., .top_level = FALSE) {
   names <- names2(x)
   invalid <- which(!nzchar(names))
@@ -283,7 +298,7 @@ format_toml.list <- function(x, ..., .top_level = FALSE) {
     result <- glue("{{ {paste0(result, collapse = \", \")} }}")
   }
   if (!is_atomic(result)) {
-    result <- flatten_chr(result)
+    result <- list_c(result)
   }
   # Ensure type-stability
   as.character(result)

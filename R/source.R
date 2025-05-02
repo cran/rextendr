@@ -22,7 +22,7 @@
 #'   otherwise, uses `rextendr.extendr_dev_deps` option
 #'   (\code{list(`extendr-api` = list(git = "https://github.com/extendr/extendr")}).
 #' @param features A vector of `extendr-api` features that should be enabled.
-#'  Supported values are `"ndarray"`, `"num-complex"`, `"serde"`, and `"graphics"`.
+#'  Supported values are `"ndarray"`, `"faer"`, `"either"`, `"num-complex"`, `"serde"`, and `"graphics"`.
 #'  Unknown features will produce a warning if `quiet` is not `TRUE`.
 #' @param env The R environment in which the wrapping functions will be defined.
 #' @param use_extendr_api Logical indicating whether
@@ -39,7 +39,7 @@
 #'   calls to [rust_source()].
 #' @param quiet Logical indicating whether compile output should be generated or not.
 #' @param use_rtools Logical indicating whether to append the path to Rtools
-#'   to the `PATH` variable on Windows using the `RTOOLS40_HOME` environment
+#'   to the `PATH` variable on Windows using the `RTOOLS4X_HOME` environment
 #'   variable (if it is set). The appended path depends on the process
 #'   architecture. Does nothing on other platforms.
 #' @param use_dev_extendr Logical indicating whether to use development version of
@@ -239,8 +239,8 @@ rust_function <- function(code,
   if (vctrs::vec_is_empty(options)) {
     attr_arg <- ""
   } else {
-    attr_arg <- options %>%
-      glue::glue_data("{Name} = {RustValue}") %>%
+    attr_arg <- options |>
+      glue::glue_data("{Name} = {RustValue}") |>
       glue::glue_collapse(sep = ", ")
     attr_arg <- glue::glue("({attr_arg})")
   }
@@ -314,7 +314,13 @@ invoke_cargo <- function(toolchain, specific_target, dir, profile,
         cli::cli_abort("rextendr currently supports R 4.x", class = "rextendr_error")
       }
 
-      if (package_version(R.version$minor) >= "3.0") {
+      minor_patch <- package_version(R.version$minor)
+
+      if (minor_patch >= "5.0") {
+        rtools_version <- "45" # nolint: object_usage_linter
+      } else if (minor_patch >= "4.0") {
+        rtools_version <- "44" # nolint: object_usage_linter
+      } else if (minor_patch >= "3.0") {
         rtools_version <- "43" # nolint: object_usage_linter
       } else {
         rtools_version <- "42" # nolint: object_usage_linter
@@ -399,11 +405,11 @@ invoke_cargo <- function(toolchain, specific_target, dir, profile,
 #' @noRd
 gather_cargo_output <- function(json_output, level, tty_has_colors) {
   rendered_output <-
-    json_output %>%
-    purrr::keep(
-      ~ .x$reason == "compiler-message" && .x$message$level == level
-    ) %>%
-    purrr::map_chr(~ .x$message$rendered)
+    json_output |>
+    keep(
+      \(.x) .x$reason == "compiler-message" && .x$message$level == level
+    ) |>
+    map_chr(\(.x) .x$message$rendered)
 
   if (!tty_has_colors) {
     rendered_output <- cli::ansi_strip(rendered_output)
@@ -429,7 +435,7 @@ gather_cargo_output <- function(json_output, level, tty_has_colors) {
 #' @param call Caller environment used for error message formatting.
 #' @noRd
 check_cargo_output <- function(compilation_result, message_buffer, tty_has_colors, quiet, call = caller_env()) {
-  cargo_output <- purrr::map(
+  cargo_output <- map(
     message_buffer,
     jsonlite::parse_json
   )
@@ -440,23 +446,23 @@ check_cargo_output <- function(compilation_result, message_buffer, tty_has_color
         cargo_output,
         "error",
         tty_has_colors
-      ) %>%
-        purrr::map_chr(
-          cli::format_inline,
-          keep_whitespace = TRUE
-        ) %>%
-        # removing double new lines with single new line
-        stringi::stri_replace_all_fixed("\n\n", "\n") %>%
-        # ensures that the leading cli style `x` is there
-        rlang::set_names("x")
+      ) |>
+      map_chr(
+        cli::format_inline,
+        keep_whitespace = TRUE
+      ) |>
+      # removing double new lines with single new line
+      stringi::stri_replace_all_fixed("\n\n", "\n") |>
+      # ensures that the leading cli style `x` is there
+      rlang::set_names("x")
 
-      rlang::abort(
-        c(
-          "Rust code could not be compiled successfully. Aborting.",
-          error_messages
-        ),
-        call = call,
-        class = "rextendr_error"
+    rlang::abort(
+      c(
+        "Rust code could not be compiled successfully. Aborting.",
+        error_messages
+      ),
+      call = call,
+      class = "rextendr_error"
     )
   }
 }
@@ -499,7 +505,7 @@ get_specific_target_name <- function() {
     )
   }
 
-  return(NULL)
+  NULL
 }
 
 the <- new.env(parent = emptyenv())

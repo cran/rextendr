@@ -1,4 +1,6 @@
 test_that("Module macro generation", {
+  skip_if_cargo_unavailable()
+
   rust_src <- r"(
 #[extendr]
 /* multiline
@@ -14,6 +16,7 @@ fn foo(a: &str, b: i64) {
     rprintln!("Data sent to Rust: {}, {}", a, b);
 }
 
+#[extendr]
 struct Counter {
     n: i32,
 }
@@ -60,6 +63,8 @@ impl Counter {
 })
 
 test_that("Macro generation fails on invalid rust code", {
+  skip_if_cargo_unavailable()
+
   expect_rextendr_error(
     make_module_macro("#[extendr]\nlet invalid_var = ();"),
     "Rust code contains invalid attribute macros."
@@ -68,6 +73,8 @@ test_that("Macro generation fails on invalid rust code", {
 
 
 test_that("Macro generation fails on invalid comments in code", {
+  skip_if_cargo_unavailable()
+
   expect_rextendr_error(
     make_module_macro("/*/*/**/"),
     "Malformed comments."
@@ -78,11 +85,11 @@ test_that("Macro generation fails on invalid comments in code", {
   )
   expect_rextendr_error(
     make_module_macro("/*/*/**/"),
-    "Found 3 occurences"
+    "Found 3 occurrences"
   )
   expect_rextendr_error(
     make_module_macro("/*/*/**/"),
-    "Found 1 occurence"
+    "Found 1 occurrence"
   )
 
   expect_rextendr_error(
@@ -93,6 +100,8 @@ test_that("Macro generation fails on invalid comments in code", {
 
 
 test_that("Rust code cleaning", {
+  skip_if_cargo_unavailable()
+
   expect_equal(
     fill_block_comments(c(
       "Nested /*/* this is */ /*commented*/ out */",
@@ -121,6 +130,8 @@ test_that("Rust code cleaning", {
 })
 
 test_that("Rust metadata capturing", {
+  skip_if_cargo_unavailable()
+
   expect_equal(
     find_extendr_attrs_ids(c(
       "#1",
@@ -137,8 +148,10 @@ test_that("Rust metadata capturing", {
 
   expect_equal(
     extract_meta("#[extendr] pub \tfn\t      test_fn  \t() {}"),
-    tibble::tibble(
+    data.frame(
       match = "fn\t      test_fn",
+      struct = NA_character_,
+      enum = NA_character_,
       fn = "fn",
       impl = NA_character_,
       lifetime = NA_character_,
@@ -151,8 +164,10 @@ test_that("Rust metadata capturing", {
       "#[extendr]",
       "pub impl  <'a, \t 'b>  X   <a', 'b> {}"
     )),
-    tibble::tibble(
+    data.frame(
       match = "impl  <'a, \t 'b>  X",
+      struct = NA_character_,
+      enum = NA_character_,
       fn = NA_character_,
       impl = "impl",
       lifetime = "'a, \t 'b",

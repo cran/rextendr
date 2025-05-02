@@ -13,7 +13,8 @@ badge](https://extendr.r-universe.dev/badges/rextendr)](https://extendr.r-univer
 stable](https://img.shields.io/badge/lifecycle-stable-brightgreen.svg)](https://lifecycle.r-lib.org/articles/stages.html#stable)
 [![R build
 status](https://github.com/extendr/rextendr/workflows/R-CMD-check/badge.svg)](https://github.com/extendr/rextendr/actions)
-[![codecov](https://codecov.io/gh/extendr/rextendr/branch/main/graph/badge.svg?token=5H6ID0LAO7)](https://app.codecov.io/gh/extendr/rextendr)
+[![Codecov test
+coverage](https://codecov.io/gh/extendr/rextendr/graph/badge.svg)](https://app.codecov.io/gh/extendr/rextendr)
 <!-- badges: end -->
 
 ## Installation
@@ -34,7 +35,7 @@ You can also install `{rextendr}` from
 [r-universe](https://extendr.r-universe.dev/rextendr):
 
 ``` r
-install.packages('rextendr', repos = c('https://extendr.r-universe.dev', 'https://cloud.r-project.org'))
+install.packages("rextendr", repos = c("https://extendr.r-universe.dev", "https://cloud.r-project.org"))
 ```
 
 Latest development version can be installed from GitHub:
@@ -49,6 +50,54 @@ libR-sys](https://github.com/extendr/libR-sys) for help. If you can
 successfully build libR-sys you’re good.
 
 ## Usage
+
+### Sitrep
+
+A good first step is to check the status of Rust toolchain and available
+targets using `rust_sitrep()`. If everything is OK, you should see
+something like this:
+
+``` r
+rust_sitrep()
+# Rust infrastructure sitrep:
+# ✔ "rustup": 1.26.0 (5af9b9484 2023-04-05)
+# ✔ "cargo": 1.72.0 (103a7ff2e 2023-08-15)
+# ℹ host: x86_64-pc-windows-msvc
+# ℹ toolchain: stable-x86_64-pc-windows-msvc (default)
+# ℹ target: x86_64-pc-windows-gnu
+```
+
+If, for instance, no toolchain is found, you will see something like
+this:
+
+``` r
+rust_sitrep()
+# Rust infrastructure sitrep:
+# ✔ "rustup": 1.26.0 (5af9b9484 2023-04-05)
+# ✔ "cargo": 1.72.0 (103a7ff2e 2023-08-15)
+# ℹ host: x86_64-pc-windows-msvc
+# ! Toolchain stable-x86_64-pc-windows-msvc is required to be installed and set as default
+# ℹ Run `rustup toolchain install stable-x86_64-pc-windows-msvc` to install it
+# ℹ Run `rustup default stable-x86_64-pc-windows-msvc` to make it default
+```
+
+Finally, if you are missing the required target (on all platforms but
+Windows `{rextendr}` uses default target), the report will resemble the
+following:
+
+``` r
+rust_sitrep()
+# Rust infrastructure sitrep:
+# ✔ "rustup": 1.26.0 (5af9b9484 2023-04-05)
+# ✔ "cargo": 1.72.0 (103a7ff2e 2023-08-15)
+# ℹ host: x86_64-pc-windows-msvc
+# i toolchains: nightly-x86_64-pc-windows-msvc and stable-x86_64-pc-windows-msvc (default)
+# i targets: x86_64-pc-windows-msvc and i686-pc-windows-msvc
+# ! Target x86_64-pc-windows-gnu is required on this host machine
+# i Run `rustup target add x86_64-pc-windows-gnu` to install it
+```
+
+### Code examples
 
 Basic use example:
 
@@ -77,9 +126,8 @@ rust_function(
           Either::Right(x) => Either::Right(x.iter().sum()),
       }
   }",
-  use_dev_extendr = TRUE,                        # Use development version of extendr from GitHub
-  features = "either",                           # Enable support for Either crate
-  extendr_fn_options = list(use_try_from = TRUE) # Enable advanced type conversion
+  use_dev_extendr = TRUE, # Use development version of extendr from GitHub
+  features = "either", # Enable support for Either crate
 )
 
 x <- 1:5

@@ -1,21 +1,23 @@
 features_config <- rlang::env(
-  known_features = c("ndarray", "serde", "num-complex", "num-complex", "graphics")
+  known_features = c("ndarray", "faer", "serde", "either", "num-complex", "graphics")
 )
 
 validate_extendr_features <- function(features, suppress_warnings) {
   features <- features %||% character(0)
 
   if (!vctrs::vec_is(features, character())) {
-    cli::cli_abort(c(
-      "!" = "{.arg features} expected to be a vector of type {.cls character}, but got {.cls {class(features)}}."
-    ),
-    class = "rextendr_error")
+    cli::cli_abort(
+      c(
+        "!" = "{.arg features} expected to be a vector of type {.cls character}, but got {.cls {class(features)}}."
+      ),
+      class = "rextendr_error"
+    )
   }
 
   features <- unique(features)
 
-  unknown_features <- features %>%
-    setdiff(features_config$known_features) %>%
+  unknown_features <- features |>
+    setdiff(features_config$known_features) |>
     discard_empty()
 
   if (!isTRUE(suppress_warnings) && length(unknown_features) > 0) {

@@ -38,7 +38,7 @@ local_quiet_cli <- function(quiet, env = rlang::caller_env()) {
 #' @return Logical scalar indicating if the command was available.
 #' @noRd
 cargo_command_available <- function(args = "--help") {
-  !any(is.na(try_exec_cmd("cargo", args)))
+  !anyNA(try_exec_cmd("cargo", args))
 }
 
 #' Helper function for executing commands.
@@ -49,11 +49,39 @@ cargo_command_available <- function(args = "--help") {
 try_exec_cmd <- function(cmd, args = character()) {
   result <- tryCatch(
     processx::run(cmd, args, error_on_status = FALSE),
-    error = \(...) list(status = -1)
+    error = function(...) list(status = -1)
   )
   if (result[["status"]] != 0) {
     NA_character_
   } else {
     stringi::stri_split_lines1(result$stdout)
   }
+}
+
+#' Replace missing values in vector
+#'
+#' @param data vector, data with missing values to replace
+#' @param replace scalar, value to substitute for missing values in data
+#' @param ... currently ignored
+#'
+#' @keywords internal
+#' @noRd
+#'
+replace_na <- function(data, replace = NA, ...) {
+  if (vctrs::vec_any_missing(data)) {
+    missing <- vctrs::vec_detect_missing(data)
+    data <- vctrs::vec_assign(data, missing, replace,
+      x_arg = "data",
+      value_arg = "replace"
+    )
+  }
+  data
+}
+
+is_osx <- function() {
+  sysinf <- Sys.info()
+  if (!is.null(sysinf)) {
+    return(identical(sysinf["sysname"], c(sysname = "Darwin")))
+  }
+  grepl("^darwin", R.version$os, ignore.case = TRUE)
 }
