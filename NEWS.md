@@ -1,3 +1,56 @@
+# rextendr 0.5.0
+
+## Added
+* `use_extendr()` now generates `cleanup` and `cleanup.win`. (#473)
+* Refactor of `rust_source()` and `rust_function()` (#478) 
+  * Adds `opts = extendr_options()` to simplify `rust_source()` API with `...` 
+    to maintain backwards compatibility
+  * Adds rlang standalone type checks to `rust_source()` and `rust_function()` 
+  * Replaces internal `invoke_cargo()` with `run_cargo()` in `rust_source()` 
+  * Simplifies handling of macro options in `rust_function(extendr_fn_options = list())` 
+  * Unknown macro options in dev and release now throw errors instead of warnings
+* `vendor_pkgs()` now has a `clean` argument to remove the `src/rust/vendor`
+  directory after creating the `vendor.tar.xz` file. (#479)
+* Added `update_scaffold()` to overwrite scaffolding, making it easier to update
+  packages to track developments in extendr and rextendr. (#493)
+* `write_license_note()` is now marked as experimental. The `authors` field in
+  Cargo metadata is deprecated upstream (<https://github.com/rust-lang/cargo/issues/16458>)
+  and crates may stop populating it, leading to incomplete author information.
+
+## Deprecated
+* `vendor_pkgs()` has been renamed to `vendor_crates()` to better reflect that
+  it vendors Rust crates. `vendor_pkgs()` is soft-deprecated and will be removed
+  in a future release.
+* Complete overhaul of wrapper-generation. (#491)
+  * `rextendr::document()` is now a thin wrapper around `devtools::document()` 
+    and is soft deprecated. Packages created with `use_extendr()` no longer 
+    require it. It is retained for backwards compatibility. 
+  * `register_extendr()` is no longer called in `rextendr::document()` and is 
+    soft deprecated. The function itself is no-op and now returns a lifecycle 
+    warning.
+  * Deprecating `register_extendr()` effectively nullifies the PkgGen CI tests, 
+    so those have been removed.
+
+## Breaking
+* Complete overhaul of wrapper-generation. (#491)
+  * `use_extendr()` now generates `src/rust/document.rs` and adds a `[[bin]]` 
+    target to `Cargo.toml` with `crate-type = ["rlib", "staticlib"]`. 
+  * `rust_eval()` now returns `extendr_api::error::Result<Robj>`.
+  * The header in `R/extendr-wrappers.R` has also been updated to reflect these
+    changes, which required a concurrent PR to extendr (extendr/extendr#1048).
+  * CI now uses the development version of extendr-api on GitHub.
+  * Snapshot and other tests now reflect these changes.
+  * Substantial updates to Roxygen documentation.
+
+## Fixed
+* `Makevars`(.win) now uses the `vendor/`, if it exists, before unzipping the 
+  tarball. (#479)
+* `entrypoint.c` now registers extendr's panic handler. (#499)
+
+## Changed
+
+* `callr` has been removed as a dependency.
+
 # rextendr 0.4.2
 
 * Sets the `extendr-api` version to the latest stable version instead of `"*"` when creating a new package. This is fetched from <https://crates.io/api/v1/crates/extendr-api> and will fall back to `"*"` if not available <https://github.com/extendr/rextendr/pull/467>

@@ -10,22 +10,29 @@
       
       Name:        extendr-api
       Repository:  https://github.com/extendr/extendr
-      Authors:     andy-thomason, Thomas Down, Mossa Merhi Reimert, Josiah Parry, Claus O. Wilke, Hiroaki Yutani, Ilia A. Kosenkov, Michael Milton
+      Authors:     
       License:     MIT
       
       -------------------------------------------------------------
       
       Name:        extendr-ffi
       Repository:  https://github.com/extendr/extendr
-      Authors:     andy-thomason, Thomas Down, Mossa Merhi Reimert, Josiah Parry, Claus O. Wilke, Hiroaki Yutani, Ilia A. Kosenkov, Michael Milton
+      Authors:     
       License:     MIT
       
       -------------------------------------------------------------
       
       Name:        extendr-macros
       Repository:  https://github.com/extendr/extendr
-      Authors:     andy-thomason, Thomas Down, Mossa Merhi Reimert, Josiah Parry, Claus O. Wilke, Hiroaki Yutani, Ilia A. Kosenkov, Michael Milton
+      Authors:     
       License:     MIT
+      
+      -------------------------------------------------------------
+      
+      Name:        lazy_static
+      Repository:  https://github.com/rust-lang-nursery/lazy-static.rs
+      Authors:     Marvin Löbel
+      License:     MIT OR Apache-2.0
       
       -------------------------------------------------------------
       
@@ -52,6 +59,13 @@
       
       Name:        quote
       Repository:  https://github.com/dtolnay/quote
+      Authors:     David Tolnay
+      License:     MIT OR Apache-2.0
+      
+      -------------------------------------------------------------
+      
+      Name:        readonly
+      Repository:  https://github.com/dtolnay/readonly
       Authors:     David Tolnay
       License:     MIT OR Apache-2.0
       
